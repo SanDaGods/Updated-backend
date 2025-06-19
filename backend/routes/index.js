@@ -7,6 +7,17 @@ const adminRoutes = require("./adminRoutes");
 
 const router = express.Router();
 
+
+// Basic API root health check
+router.get("/ping", (req, res) => {
+  res.json({ success: true, message: "API root is working." });
+});
+
+// Optional test endpoint
+router.get("/test", (req, res) => {
+  res.json({ message: "Backend working!" });
+});
+
 router.use(express.static(path.join(__dirname, "../../frontend")));
 router.use(express.static(path.join(__dirname, "../../frontend/client")));
 router.use(
