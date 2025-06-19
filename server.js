@@ -14,7 +14,7 @@ const conn = mongoose.connection;
 
 const app = express();
 const PORT = 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
+const JWT_SECRET = process.env.JWT_SECRET || "3T33@APPR0@GR!M";
 
 // Middleware
 app.use(express.json());
