@@ -1,14 +1,13 @@
 const express = require("express");
-const path = require("path");
 const fs = require("fs");
+const path = require("path");
 const applicantRoutes = require("./applicantRoutes");
 const assessorRoutes = require("./assessorRoutes");
 const adminRoutes = require("./adminRoutes");
 
 const router = express.Router();
 
-
-// Basic API root health check
+// Health check route
 router.get("/ping", (req, res) => {
   res.json({ success: true, message: "API root is working." });
 });
@@ -18,30 +17,12 @@ router.get("/test", (req, res) => {
   res.json({ message: "Backend working!" });
 });
 
-router.use(express.static(path.join(__dirname, "../../frontend")));
-router.use(express.static(path.join(__dirname, "../../frontend/client")));
-router.use(
-  express.static(path.join(__dirname, "../../frontend/client/applicant"))
-);
-router.use(
-  express.static(path.join(__dirname, "../../frontend/client/applicant/home"))
-);
-router.use(
-  express.static(path.join(__dirname, "../../frontend/client/applicant/login"))
-);
+// API routes
+router.use("/applicants", applicantRoutes);
+router.use("/assessors", assessorRoutes);
+router.use("/admins", adminRoutes);
 
-router.get("/", (req, res) => {
-  res.sendFile(
-    path.join(__dirname, "../../frontend/client/applicant/home/index.html")
-  );
-});
-
-router.get("/applicant-login", (req, res) => {
-  res.sendFile(
-    path.join(__dirname, "../../frontend/client/applicant/login/login.html")
-  );
-});
-
+// Serve uploaded PDF documents
 router.get("/documents/:filename", (req, res) => {
   const filename = req.params.filename;
 
