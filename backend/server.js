@@ -17,7 +17,7 @@ const applicants = require("./routes/applicantRoutes");
 const admins = require("./routes/adminRoutes");
 const assessors = require("./routes/assessorRoutes");
 
-const Admin = require("./models/Admin"); // ✅ Mongoose model for admin
+const Admin = require("./models/Admin"); // ✅ CORRECT
 
 const app = express();
 
@@ -45,28 +45,24 @@ connectDB();
 const conn = mongoose.connection;
 let gfs;
 
-// ✅ Init GridFS after DB is open
-conn.once("open", async () => {
+db.once("open", async () => {
   console.log("✅ MongoDB connected successfully");
 
-  gfs = new GridFSBucket(conn.db, { bucketName: "backupFiles" });
-
-  // ✅ Create default admin if none exists
   try {
     const adminCount = await Admin.countDocuments();
     if (adminCount === 0) {
-      const hashedPassword = await require("bcryptjs").hash("SecurePassword123", 10);
       const defaultAdmin = new Admin({
         email: "admin@example.com",
-        password: hashedPassword,
+        password: "SecurePassword123", // 🔐 Remember to hash in production!
         fullName: "System Administrator",
         isSuperAdmin: true,
       });
+
       await defaultAdmin.save();
       console.log("🔑 Default admin account created:", defaultAdmin.email);
     }
   } catch (err) {
-    console.error("❌ Error creating default admin:", err);
+    console.error("Error creating default admin:", err);
   }
 });
 
