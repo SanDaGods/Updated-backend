@@ -20,7 +20,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "3T33@APPR0@GR!M";
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors({ 
-  origin: "http://localhost", // or your frontend URL
+  origin: "https://updated-frontend-ten.vercel.app", // or your frontend URL
   credentials: true,
   exposedHeaders: ['set-cookie']
 }));
@@ -31,8 +31,6 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // MongoDB Connection
 mongoose.connect("mongodb://127.0.0.1:27017/Eteeap", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
 });
 
 const db = mongoose.connection;
