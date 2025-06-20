@@ -11,58 +11,35 @@ const multer = require('multer');
 const fs = require("fs");
 const { GridFSBucket, ObjectId } = require('mongodb');
 const conn = mongoose.connection;
-const connectDB = require("./config/db");
-const { PORT } = require("./config/constants");
-const routes = require("./routes");
-const applicants = require("./routes/applicantRoutes");
-const admins = require("./routes/adminRoutes");
-const assessors = require("./routes/assessorRoutes");
 
 const app = express();
+const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "3T33@APPR0@GR!M";
-
-// Connect to MongoDB
-connectDB();
 
 // Middleware
 app.use(express.json());
-app.use(bodyParser.json());
 app.use(cookieParser());
+app.use(cors({ 
+  origin: "http://localhost", // or your frontend URL
+  credentials: true,
+  exposedHeaders: ['set-cookie']
+}));
+app.use(bodyParser.json());
 
-// ✅ CORS: Allow your frontend URLs
-app.use(
-  cors({
-    origin: [
-      "https://updated-frontend-ten.vercel.app", // <-- your Vercel frontend
-      "http://localhost:3000",                   // <-- for local testing
-    ],
-    credentials: true,
-    exposedHeaders: ["set-cookie"],
-  })
-);
+// Serve static files
+app.use(express.static(path.join(__dirname, "public")));
 
-// ✅ Do NOT serve static frontend files (Vercel handles that)
-/// Removed: app.use(express.static(path.join(__dirname, "frontend")));
-
-
-// ✅ Routes
-app.use("/", routes, applicants, assessors, admins);
-
-// ✅ Error handling middleware
-app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res.status(500).json({
-    success: false,
-    error: "Internal server error",
-    details: process.env.NODE_ENV === "production" ? undefined : err.message,
-  });
+// MongoDB Connection
+mongoose.connect("mongodb://127.0.0.1:27017/Eteeap", {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
 });
 
-// ✅ Start the server
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
-
+const db = mongoose.connection;
+db.on("error", console.error.bind(console, "MongoDB connection error:"));
+db.once("open", async () => {
+  console.log("✅ MongoDB connected successfully");
+  
   try {
     // Check if any admin exists
     const Admin = mongoose.model('Admin', adminSchema);
