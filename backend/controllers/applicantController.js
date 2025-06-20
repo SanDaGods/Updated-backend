@@ -172,7 +172,7 @@ exports.fileFetch = async (req, res) => {
     const downloadStream = gfs.openDownloadStream(fileId);
 
     res.set("Content-Type", file.contentType);
-    res.set("Content-Disposition", inline; filename="${file.filename}");
+    res.set("Content-Disposition", `inline; filename="${file.filename}"`);
 
     downloadStream.pipe(res);
 
