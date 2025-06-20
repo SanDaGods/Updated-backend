@@ -1,72 +1,93 @@
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
-const bodyParser = require('body-parser');
-const path = require("path");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
+const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
-const multer = require('multer');
+const path = require("path");
+const { GridFSBucket } = require("mongodb");
 const fs = require("fs");
-const { GridFSBucket, ObjectId } = require('mongodb');
-const conn = mongoose.connection;
+
+const connectDB = require("./config/db");
+const { PORT = 3000, JWT_SECRET } = require("./config/constants");
+
+// Routes
+const routes = require("./routes");
+const applicants = require("./routes/applicantRoutes");
+const admins = require("./routes/adminRoutes");
+const assessors = require("./routes/assessorRoutes");
+
+const Admin = require("./models/Admin"); // ✅ Mongoose model for admin
 
 const app = express();
-const PORT = 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "3T33@APPR0@GR!M";
 
-// Middleware
+// ✅ Middleware
 app.use(express.json());
 app.use(cookieParser());
-app.use(cors({ 
-  origin: "https://updated-frontend-ten.vercel.app", // or your frontend URL
-  credentials: true,
-  exposedHeaders: ['set-cookie']
-}));
 app.use(bodyParser.json());
+app.use(
+  cors({
+    origin: [
+      "https://updated-frontend-ten.vercel.app", // Production frontend
+      "http://localhost:3000",                   // Local dev
+    ],
+    credentials: true,
+    exposedHeaders: ["set-cookie"],
+  })
+);
 
-// Serve static files
-app.use(express.static(path.join(__dirname, "public")));
+// ❌ Don't serve static frontend files (Vercel handles that)
+// app.use(express.static(path.join(__dirname, "public")));
 
-// MongoDB Connection
-mongoose.connect("mongodb://127.0.0.1:27017/Eteeap", {
-});
+// ✅ Connect to MongoDB
+connectDB();
 
-const db = mongoose.connection;
-db.on("error", console.error.bind(console, "MongoDB connection error:"));
-db.once("open", async () => {
+const conn = mongoose.connection;
+let gfs;
+
+// ✅ Init GridFS after DB is open
+conn.once("open", async () => {
   console.log("✅ MongoDB connected successfully");
-  
+
+  gfs = new GridFSBucket(conn.db, { bucketName: "backupFiles" });
+
+  // ✅ Create default admin if none exists
   try {
-    // Check if any admin exists
-    const Admin = mongoose.model('Admin', adminSchema);
     const adminCount = await Admin.countDocuments();
-    
     if (adminCount === 0) {
-      // Create a default admin if none exists
+      const hashedPassword = await require("bcryptjs").hash("SecurePassword123", 10);
       const defaultAdmin = new Admin({
-        email: 'admin@example.com',
-        password: 'SecurePassword123', // In production, you should hash this!
-        fullName: 'System Administrator',
-        isSuperAdmin: true
+        email: "admin@example.com",
+        password: hashedPassword,
+        fullName: "System Administrator",
+        isSuperAdmin: true,
       });
-      
       await defaultAdmin.save();
-      console.log('🔑 Default admin account created:', defaultAdmin.email);
+      console.log("🔑 Default admin account created:", defaultAdmin.email);
     }
   } catch (err) {
-    console.error('Error creating default admin:', err);
+    console.error("❌ Error creating default admin:", err);
   }
 });
 
-// Initialize GridFS bucket
-let gfs;
-conn.once('open', () => {
-  gfs = new GridFSBucket(conn.db, {
-    bucketName: 'backupFiles'
+// ✅ API Routes
+app.use("/", routes, applicants, admins, assessors);
+
+// ✅ Global Error Handler
+app.use((err, req, res, next) => {
+  console.error("❌ Unhandled error:", err);
+  res.status(500).json({
+    success: false,
+    error: "Internal server error",
+    details: process.env.NODE_ENV === "production" ? undefined : err.message,
   });
 });
+
+// ✅ Start server
+app.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
+});
+
 
 // ======================
 // SCHEMAS
