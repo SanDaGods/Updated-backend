@@ -31,19 +31,21 @@ app.use(
   })
 );
 
-// Connect to MongoDB
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/eteeap", {
+    const mongoURI = process.env.MONGODB_URI;
+    await mongoose.connect(mongoURI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
-    console.log("MongoDB Connected");
+    console.log("✅ MongoDB connected successfully");
   } catch (err) {
     console.error("MongoDB Connection Error:", err);
-    process.exit(1);
+    process.exit(1); // exit if database fails
   }
 };
+
+connectDB();
 
 connectDB();
 
