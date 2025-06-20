@@ -1260,7 +1260,7 @@ app.post("/api/admins/register", async (req, res) => {
     if (adminCount > 0) {
       const token = req.cookies.adminToken;
       
-      if (!token) {
+           if (!token) {
         return res.status(401).json({ 
           success: false, 
           error: "Authentication required - please login first" 
@@ -1268,7 +1268,7 @@ app.post("/api/admins/register", async (req, res) => {
       }
 
       try {
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const requestingAdmin = await Admin.findById(decoded.userId);
         
         if (!requestingAdmin || !requestingAdmin.isSuperAdmin) {
@@ -1308,8 +1308,7 @@ app.post("/api/admins/register", async (req, res) => {
 
     return res.status(201).json({ 
       success: true, 
-      message: "Admin registration successful. Please login.",
-      redirectTo: "/frontend/AdminSide/1.adminLogin/adminlogin.html",
+      message: "Admin registration successful",
       data: {
         email: newAdmin.email,
         fullName: newAdmin.fullName,
@@ -1326,7 +1325,8 @@ app.post("/api/admins/register", async (req, res) => {
   }
 });
 
-app.post("/admin/login", async (req, res) => {
+// Admin Login
+app.post("/api/admins/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -1360,7 +1360,7 @@ app.post("/admin/login", async (req, res) => {
         fullName: admin.fullName,
         isSuperAdmin: admin.isSuperAdmin
       }, 
-      JWT_SECRET, 
+      process.env.JWT_SECRET, 
       { expiresIn: "8h" }
     );
 
@@ -1375,7 +1375,6 @@ app.post("/admin/login", async (req, res) => {
     res.json({ 
       success: true, 
       message: "Login successful",
-      redirectTo: "/frontend/AdminSide/2.adminDash/admin.html",
       data: {
         email: admin.email,
         fullName: admin.fullName,
@@ -1391,7 +1390,34 @@ app.post("/admin/login", async (req, res) => {
   }
 });
 
-app.get("/admin/auth-status", async (req, res) => {
+// Get Admin Profile
+app.get("/api/admins/profile", adminAuthMiddleware, async (req, res) => {
+  try {
+    const admin = await Admin.findById(req.admin.userId)
+      .select('-password -__v');
+
+    if (!admin) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Admin not found' 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true,
+      data: admin 
+    });
+  } catch (error) {
+    console.error('Error fetching admin profile:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch admin profile' 
+    });
+  }
+});
+
+// Admin Auth Status
+app.get("/api/admins/auth-status", async (req, res) => {
   try {
     const token = req.cookies.adminToken;
     
@@ -1402,7 +1428,7 @@ app.get("/admin/auth-status", async (req, res) => {
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const admin = await Admin.findOne({ _id: decoded.userId }).select('-password');
     
     if (!admin) {
@@ -1432,21 +1458,15 @@ app.get("/admin/auth-status", async (req, res) => {
   }
 });
 
-app.post("/admin/logout", (req, res) => {
+// Admin Logout
+app.post("/api/admins/logout", (req, res) => {
   res.clearCookie("adminToken");
   res.json({ success: true, message: "Admin logged out successfully" });
 });
 
-app.get("/frontend/AdminSide/2.adminDash/admin.html", adminAuthMiddleware, (req, res) => {
-  res.sendFile(
-    path.join(__dirname, "public", "frontend", "AdminSide", "2.adminDash", "admin.html")
-  );
-});
-
-// In server.js, update the /api/admin/applicants route:
-app.get("/api/admin/applicants", adminAuthMiddleware, async (req, res) => {
+// Get All Applicants
+app.get("/api/admins/applicants", adminAuthMiddleware, async (req, res) => {
   try {
-    // Remove the limit parameter to always return all applicants
     const applicants = await Applicant.find({})
       .select('-password -files -__v')
       .sort({ createdAt: -1 });
@@ -1478,7 +1498,8 @@ app.get("/api/admin/applicants", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/admin/applicants/:id", adminAuthMiddleware, async (req, res) => {
+// Get Applicant Details
+app.get("/api/admins/applicants/:id", adminAuthMiddleware, async (req, res) => {
   try {
     const applicantId = req.params.id;
     
@@ -1532,7 +1553,8 @@ app.get("/api/admin/applicants/:id", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.post("/api/admin/applicants/:id/approve", adminAuthMiddleware, async (req, res) => {
+// Approve Applicant
+app.post("/api/admins/applicants/:id/approve", adminAuthMiddleware, async (req, res) => {
   try {
     const applicantId = req.params.id;
     
@@ -1570,7 +1592,8 @@ app.post("/api/admin/applicants/:id/approve", adminAuthMiddleware, async (req, r
   }
 });
 
-app.post("/api/admin/applicants/:id/reject", adminAuthMiddleware, async (req, res) => {
+// Reject Applicant
+app.post("/api/admins/applicants/:id/reject", adminAuthMiddleware, async (req, res) => {
   try {
     const applicantId = req.params.id;
     
@@ -1608,7 +1631,8 @@ app.post("/api/admin/applicants/:id/reject", adminAuthMiddleware, async (req, re
   }
 });
 
-app.post("/api/admin/applicants/:id/assign-assessor", adminAuthMiddleware, async (req, res) => {
+// Assign Assessor to Applicant
+app.post("/api/admins/applicants/assign-assessor", adminAuthMiddleware, async (req, res) => {
   try {
     const { applicantId, assessorId } = req.body;
     
@@ -1638,7 +1662,7 @@ app.post("/api/admin/applicants/:id/assign-assessor", adminAuthMiddleware, async
       });
     }
 
-    // Get applicant details for the assignment record
+    // Get applicant details for assignment record
     const applicantFullName = applicant.personalInfo ? 
       `${applicant.personalInfo.firstname || ''} ${applicant.personalInfo.lastname || ''}`.trim() : 
       'No name provided';
@@ -1694,7 +1718,8 @@ app.post("/api/admin/applicants/:id/assign-assessor", adminAuthMiddleware, async
   }
 });
 
-app.get("/api/admin/available-assessors", adminAuthMiddleware, async (req, res) => {
+// Get Available Assessors
+app.get("/api/admins/available-assessors", adminAuthMiddleware, async (req, res) => {
   try {
     const assessors = await Assessor.find({ isApproved: true })
       .select('_id assessorId fullName expertise assessorType')
@@ -1713,7 +1738,8 @@ app.get("/api/admin/available-assessors", adminAuthMiddleware, async (req, res) 
   }
 });
 
-app.get("/api/admin/dashboard-stats", adminAuthMiddleware, async (req, res) => {
+// Get Dashboard Stats
+app.get("/api/admins/dashboard-stats", adminAuthMiddleware, async (req, res) => {
   try {
     const totalApplicants = await Applicant.countDocuments();
     const newApplicants = await Applicant.countDocuments({ 
@@ -1724,6 +1750,7 @@ app.get("/api/admin/dashboard-stats", adminAuthMiddleware, async (req, res) => {
     const evaluatedPassed = await Applicant.countDocuments({ status: "Evaluated - Passed" });
     const evaluatedFailed = await Applicant.countDocuments({ status: "Evaluated - Failed" });
     const rejected = await Applicant.countDocuments({ status: "Rejected" });
+    const approved = await Applicant.countDocuments({ status: "Approved" });
 
     res.status(200).json({
       success: true,
@@ -1734,7 +1761,8 @@ app.get("/api/admin/dashboard-stats", adminAuthMiddleware, async (req, res) => {
         underAssessment,
         evaluatedPassed,
         evaluatedFailed,
-        rejected
+        rejected,
+        approved
       }
     });
   } catch (error) {
@@ -1746,7 +1774,8 @@ app.get("/api/admin/dashboard-stats", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.get("/assessor/all", adminAuthMiddleware, async (req, res) => {
+// Get All Assessors
+app.get("/api/admins/assessors", adminAuthMiddleware, async (req, res) => {
   try {
     const assessors = await Assessor.find({})
       .populate('assignedApplicants')
@@ -1779,7 +1808,8 @@ app.get("/assessor/all", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.get("/assessor/:id", adminAuthMiddleware, async (req, res) => {
+// Get Assessor Details
+app.get("/api/admins/assessors/:id", adminAuthMiddleware, async (req, res) => {
   try {
     const assessor = await Assessor.findById(req.params.id)
       .select('-password -__v')
@@ -1828,7 +1858,8 @@ app.get("/assessor/:id", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.put("/assessor/:id", adminAuthMiddleware, async (req, res) => {
+// Update Assessor
+app.put("/api/admins/assessors/:id", adminAuthMiddleware, async (req, res) => {
   try {
     const { fullName, email, assessorType, expertise, isApproved } = req.body;
     
@@ -1859,7 +1890,8 @@ app.put("/assessor/:id", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.delete("/assessor/:id", adminAuthMiddleware, async (req, res) => {
+// Delete Assessor
+app.delete("/api/admins/assessors/:id", adminAuthMiddleware, async (req, res) => {
   try {
     const deletedAssessor = await Assessor.findByIdAndDelete(req.params.id);
 
@@ -1889,52 +1921,8 @@ app.delete("/assessor/:id", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/assessor/:id/applicants", adminAuthMiddleware, async (req, res) => {
-  try {
-    const assessor = await Assessor.findById(req.params.id)
-      .populate('assignedApplicants', 'applicantId personalInfo status files evaluations')
-      .select('assignedApplicants');
-
-    if (!assessor) {
-      return res.status(404).json({
-        success: false,
-        error: 'Assessor not found'
-      });
-    }
-
-    const formattedApplicants = assessor.assignedApplicants.map(applicant => {
-      const latestEvaluation = applicant.evaluations && applicant.evaluations.length > 0 
-        ? applicant.evaluations[applicant.evaluations.length - 1]
-        : null;
-
-      return {
-        _id: applicant._id,
-        applicantId: applicant.applicantId,
-        name: applicant.personalInfo ? 
-          `${applicant.personalInfo.lastname || ''}, ${applicant.personalInfo.firstname || ''}`.trim() : 
-          'No name provided',
-        course: applicant.personalInfo?.firstPriorityCourse || 'Not specified',
-        status: applicant.status || 'Under Assessment',
-        documentsCount: applicant.files ? applicant.files.length : 0,
-        latestScore: latestEvaluation ? latestEvaluation.totalScore : null,
-        isPassed: latestEvaluation ? latestEvaluation.isPassed : null
-      };
-    });
-
-    res.status(200).json({
-      success: true,
-      data: formattedApplicants
-    });
-  } catch (error) {
-    console.error('Error fetching assessor applicants:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch assessor applicants'
-    });
-  }
-});
-
-app.get("/api/admin/evaluations", adminAuthMiddleware, async (req, res) => {
+// Get All Evaluations
+app.get("/api/admins/evaluations", adminAuthMiddleware, async (req, res) => {
   try {
     const evaluations = await Evaluation.find({})
       .populate('applicantId', 'personalInfo status')
@@ -1976,7 +1964,8 @@ app.get("/api/admin/evaluations", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/admin/evaluations/:id", adminAuthMiddleware, async (req, res) => {
+// Get Evaluation Details
+app.get("/api/admins/evaluations/:id", adminAuthMiddleware, async (req, res) => {
   try {
     const evaluation = await Evaluation.findById(req.params.id)
       .populate('applicantId', 'personalInfo files status')
@@ -2002,8 +1991,12 @@ app.get("/api/admin/evaluations/:id", adminAuthMiddleware, async (req, res) => {
   }
 });
 
-// Serve documents
-app.get('/documents/:filename', (req, res) => {
+// ======================
+// FILE HANDLING ROUTES
+// ======================
+
+// Serve Files
+app.get('/files/:filename', (req, res) => {
   const filename = req.params.filename;
   
   if (!filename.endsWith('.pdf') || !/^[a-zA-Z0-9_\-\.]+\.pdf$/.test(filename)) {
@@ -2020,51 +2013,126 @@ app.get('/documents/:filename', (req, res) => {
   res.sendFile(filePath);
 });
 
-
-// Add this route to server.js
-app.get("/api/evaluations/applicant/:applicantId", assessorAuthMiddleware, async (req, res) => {
+// Upload Files (GridFS)
+app.post('/api/files/upload', upload.single('file'), async (req, res) => {
   try {
-    const { applicantId } = req.params;
-    const assessorId = req.assessor.userId;
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'No file uploaded' 
+      });
+    }
 
-    const evaluations = await Evaluation.find({
-      applicantId,
-      assessorId
-    }).sort({ finalizedAt: -1 });
+    const readStream = fs.createReadStream(req.file.path);
+    const uploadStream = gfs.openUploadStream(req.file.originalname, {
+      contentType: req.file.mimetype,
+      metadata: {
+        uploadDate: new Date(),
+        originalName: req.file.originalname,
+        size: req.file.size,
+        owner: req.body.userId || 'unknown'
+      }
+    });
 
-    res.status(200).json({
-      success: true,
-      data: evaluations.length > 0 ? evaluations[0] : null
+    readStream.pipe(uploadStream);
+
+    uploadStream.on('error', (error) => {
+      fs.unlinkSync(req.file.path);
+      throw error;
+    });
+
+    uploadStream.on('finish', () => {
+      fs.unlinkSync(req.file.path);
+      res.status(201).json({
+        success: true,
+        message: 'File uploaded successfully',
+        fileId: uploadStream.id,
+        filename: req.file.originalname,
+        size: req.file.size,
+        contentType: req.file.mimetype
+      });
     });
   } catch (error) {
-    console.error('Error fetching applicant evaluations:', error);
-    res.status(500).json({
+    console.error('File upload error:', error);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ 
       success: false,
-      error: 'Failed to fetch evaluations'
+      error: 'File upload failed',
+      details: error.message
     });
   }
 });
 
+// Download Files
+app.get('/api/files/download/:id', async (req, res) => {
+  try {
+    const fileId = new ObjectId(req.params.id);
+    const file = await conn.db.collection('applicantFiles.files').findOne({ _id: fileId });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-    console.error('Unhandled error:', err);
-    res.status(500).json({
+    if (!file) {
+      return res.status(404).json({ 
         success: false,
-        error: 'Internal server error',
-        details: process.env.NODE_ENV === 'development' ? err.message : undefined
+        error: 'File not found' 
+      });
+    }
+
+    res.set('Content-Type', file.contentType);
+    res.set('Content-Disposition', `attachment; filename="${file.filename}"`);
+
+    const downloadStream = gfs.openDownloadStream(fileId);
+    downloadStream.pipe(res);
+  } catch (error) {
+    console.error('Error serving file:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to serve file' 
     });
+  }
 });
 
+// Delete Files
+app.delete('/api/files/:id', async (req, res) => {
+  try {
+    const fileId = new ObjectId(req.params.id);
+    await gfs.delete(fileId);
+    res.json({ 
+      success: true, 
+      message: 'File deleted successfully' 
+    });
+  } catch (error) {
+    console.error('Error deleting file:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to delete file' 
+    });
+  }
+});
 
-// Start Server
+// ======================
+// ERROR HANDLER
+// ======================
+
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// ======================
+// START SERVER
+// ======================
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log(`📁 MongoDB collections is connected:`);
-  console.log(`- Eteeap.Applicants`);
-  console.log(`- Eteeap.Assessors`);
-  console.log(`- Eteeap.AssessorCounters`);
-  console.log(`- Eteeap.ApplicantCounters`);
-  console.log(`- Eteeap.Admins`);
-  console.log(`- Eteeap.Evaluations`);
+  console.log(`📁 MongoDB collections connected:`);
+  console.log(`- Applicants`);
+  console.log(`- Assessors`);
+  console.log(`- Admins`);
+  console.log(`- Evaluations`);
+  console.log(`- applicantFiles (GridFS)`);
 });
