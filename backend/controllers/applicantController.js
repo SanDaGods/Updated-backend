@@ -620,4 +620,5 @@ exports.getProfilePic = async (req, res) => {
     console.error("Error serving profile pic:", error);
     res.status(500).send("Error retrieving profile picture");
   }
+}
 };
