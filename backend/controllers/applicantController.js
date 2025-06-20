@@ -279,10 +279,11 @@ exports.fileSubmit = async (req, res) => {
     );
 
     res.json({
-      success: true,
-      message: ${uploadResults.length} files uploaded successfully,
-      files: uploadResults,
-    });
+  success: true,
+  message: `${uploadResults.length} files uploaded successfully`,
+  files: uploadResults,
+});
+
   } catch (error) {
     console.error("File upload error:", error);
 
@@ -619,6 +620,5 @@ exports.getProfilePic = async (req, res) => {
   } catch (error) {
     console.error("Error serving profile pic:", error);
     res.status(500).send("Error retrieving profile picture");
-  }
 }
 };
