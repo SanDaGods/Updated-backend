@@ -31,6 +31,11 @@ app.use(
   })
 );
 
+app.get("/api/ping", (req, res) => {
+  res.json({ message: "Server is alive" });
+});
+
+
 const connectDB = async () => {
   try {
     const mongoURI = process.env.MONGO_URI;
@@ -47,13 +52,6 @@ const connectDB = async () => {
 
 connectDB();
 
-connectDB();
-
-const conn = mongoose.connection;
-let gfs;
-
-conn.once("open", async () => {
-  console.log("✅ MongoDB connected successfully");
   gfs = new GridFSBucket(conn.db, { bucketName: "applicantFiles" });
 
   try {
