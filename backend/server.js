@@ -11,6 +11,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { ObjectId } = require("mongodb");
+const PORT = process.env.PORT || 3000;
 
 // Initialize Express app
 const app = express();
