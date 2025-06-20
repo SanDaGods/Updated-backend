@@ -7,21 +7,15 @@ const cors = require("cors");
 const path = require("path");
 const { GridFSBucket } = require("mongodb");
 const fs = require("fs");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const { ObjectId } = require("mongodb");
 
-const connectDB = require("./config/db");
-const { PORT = 3000, JWT_SECRET } = require("./config/constants");
-
-// Routes
-const routes = require("./routes");
-const applicants = require("./routes/applicantRoutes");
-const admins = require("./routes/adminRoutes");
-const assessors = require("./routes/assessorRoutes");
-
-const Admin = require("./models/Admin"); // ✅ CORRECT
-
+// Initialize Express app
 const app = express();
 
-// ✅ Middleware
+// Middleware
 app.use(express.json());
 app.use(cookieParser());
 app.use(bodyParser.json());
@@ -36,24 +30,36 @@ app.use(
   })
 );
 
-// ❌ Don't serve static frontend files (Vercel handles that)
-// app.use(express.static(path.join(__dirname, "public")));
+// Connect to MongoDB
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI || "mongodb://localhost:27017/eteeap", {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("MongoDB Connected");
+  } catch (err) {
+    console.error("MongoDB Connection Error:", err);
+    process.exit(1);
+  }
+};
 
-// ✅ Connect to MongoDB
 connectDB();
 
 const conn = mongoose.connection;
 let gfs;
 
-db.once("open", async () => {
+conn.once("open", async () => {
   console.log("✅ MongoDB connected successfully");
+  gfs = new GridFSBucket(conn.db, { bucketName: "applicantFiles" });
 
   try {
     const adminCount = await Admin.countDocuments();
     if (adminCount === 0) {
+      const hashedPassword = await bcrypt.hash("SecurePassword123", 10);
       const defaultAdmin = new Admin({
         email: "admin@example.com",
-        password: "SecurePassword123", // 🔐 Remember to hash in production!
+        password: hashedPassword,
         fullName: "System Administrator",
         isSuperAdmin: true,
       });
@@ -66,27 +72,8 @@ db.once("open", async () => {
   }
 });
 
-// ✅ API Routes
-app.use("/", routes, applicants, admins, assessors);
-
-// ✅ Global Error Handler
-app.use((err, req, res, next) => {
-  console.error("❌ Unhandled error:", err);
-  res.status(500).json({
-    success: false,
-    error: "Internal server error",
-    details: process.env.NODE_ENV === "production" ? undefined : err.message,
-  });
-});
-
-// ✅ Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
-});
-
-
 // ======================
-// SCHEMAS
+// MODELS
 // ======================
 
 const applicantCounterSchema = new mongoose.Schema({
@@ -240,7 +227,7 @@ const applicantSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
-}],
+  }],
   createdAt: { 
     type: Date, 
     default: Date.now 
@@ -252,7 +239,6 @@ const applicantSchema = new mongoose.Schema({
 }, { collection: "Applicants" });
 
 const Applicant = mongoose.model("Applicant", applicantSchema);
-
 
 const assessorCounterSchema = new mongoose.Schema({
   _id: { type: String, required: true },
@@ -421,7 +407,7 @@ const applicantAuthMiddleware = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.applicant = decoded;
     next();
   } catch (err) {
@@ -437,7 +423,7 @@ const assessorAuthMiddleware = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.assessor = decoded;
     next();
   } catch (err) {
@@ -453,7 +439,7 @@ const adminAuthMiddleware = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.admin = decoded;
     next();
   } catch (err) {
@@ -464,6 +450,15 @@ const adminAuthMiddleware = async (req, res, next) => {
 // ======================
 // UTILITY FUNCTIONS
 // ======================
+
+async function getNextApplicantId() {
+  const counter = await ApplicantCounter.findByIdAndUpdate(
+    'applicantId',
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return `APP${counter.seq.toString().padStart(4, '0')}`;
+}
 
 async function getNextAssessorId() {
   const counter = await AssessorCounter.findByIdAndUpdate(
@@ -498,72 +493,32 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Default route
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+  res.send("ETEEAP Server is running");
 });
 
 // ======================
 // APPLICANT ROUTES
 // ======================
 
-async function getNextApplicantId() {
-  try {
-    const counter = await ApplicantCounter.findByIdAndUpdate(
-      'applicantId',
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    return `APP${counter.seq.toString().padStart(4, '0')}`;
-  } catch (error) {
-    console.error("Error generating applicant ID:", error);
-    // Fallback to timestamp-based ID if counter fails
-    return `APP${Date.now().toString().slice(-4)}`;
-  }
-}
-
-app.post("/api/register", async (req, res) => {
+// Applicant Registration
+app.post("/api/applicants/register", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    console.log("Registration attempt for:", email);
-
     // Validate input
     if (!email || !password) {
       return res.status(400).json({ 
         success: false, 
-        error: "Email and password are required",
-        details: "One or more required fields were empty"
-      });
-    }
-
-    // Check email format with more permissive regex
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(email)) {
-      console.log("Invalid email format:", email);
-      return res.status(400).json({
-        success: false,
-        error: "Invalid email format",
-        details: `Please enter a valid email address (e.g., user@example.com). Provided: ${email}`
-      });
-    }
-
-    // Check password length
-    if (password.length < 8) {
-      console.log("Password too short");
-      return res.status(400).json({
-        success: false,
-        error: "Password too short",
-        details: "Password must be at least 8 characters"
+        error: "Email and password are required" 
       });
     }
 
     // Check if email already exists
     const existingUser = await Applicant.findOne({ email: email.toLowerCase() });
     if (existingUser) {
-      console.log("Email already exists:", email);
       return res.status(400).json({ 
         success: false, 
-        error: "Email already registered",
-        details: "This email is already in use"
+        error: "Email already registered" 
       });
     }
 
@@ -577,12 +532,32 @@ app.post("/api/register", async (req, res) => {
     const newApplicant = new Applicant({ 
       email: email.toLowerCase(), 
       password: hashedPassword,
-      applicantId
+      applicantId,
+      status: "Pending Review"
     });
 
     // Save to database
     await newApplicant.save();
-    console.log("Registration successful for:", email);
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        userId: newApplicant._id, 
+        role: "applicant",
+        email: newApplicant.email
+      }, 
+      process.env.JWT_SECRET, 
+      { expiresIn: "1h" }
+    );
+
+    // Set cookie
+    res.cookie("applicantToken", token, { 
+      httpOnly: true, 
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 3600000,
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      path: "/"
+    });
 
     // Successful response
     res.status(201).json({ 
@@ -590,7 +565,8 @@ app.post("/api/register", async (req, res) => {
       message: "Registration successful!",
       data: {
         userId: newApplicant._id,
-        applicantId: newApplicant.applicantId
+        applicantId: newApplicant.applicantId,
+        email: newApplicant.email
       }
     });
 
@@ -599,18 +575,17 @@ app.post("/api/register", async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: "Registration failed",
-      details: error.message,
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined
+      details: error.message
     });
   }
 });
 
-
-app.post("/api/login", async (req, res) => {
+// Applicant Login
+app.post("/api/applicants/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const applicant = await Applicant.findOne({ email });
+    const applicant = await Applicant.findOne({ email: email.toLowerCase() });
     if (!applicant) {
       return res.status(401).json({ 
         success: false, 
@@ -632,7 +607,7 @@ app.post("/api/login", async (req, res) => {
         role: "applicant",
         email: applicant.email
       }, 
-      JWT_SECRET, 
+      process.env.JWT_SECRET, 
       { expiresIn: "1h" }
     );
 
@@ -649,7 +624,9 @@ app.post("/api/login", async (req, res) => {
       message: "Login successful",
       data: {
         userId: applicant._id,
-        email: applicant.email
+        email: applicant.email,
+        applicantId: applicant.applicantId,
+        status: applicant.status
       }
     });
   } catch (error) {
@@ -661,271 +638,10 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// Route to serve files
-app.get('/file/:id', async (req, res) => {
+// Get Applicant Profile
+app.get("/api/applicants/profile", applicantAuthMiddleware, async (req, res) => {
   try {
-    const fileId = new ObjectId(req.params.id);
-    const file = await conn.db.collection('applicantFiles.files').findOne({ _id: fileId });
-
-    if (!file) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-
-    res.set('Content-Type', file.contentType);
-    res.set('Content-Disposition', `inline; filename="${file.filename}"`);
-
-    const downloadStream = gfs.openDownloadStream(fileId);
-    downloadStream.pipe(res);
-  } catch (error) {
-    console.error('Error serving file:', error);
-    res.status(500).json({ error: 'Failed to serve file' });
-  }
-});
-
-// Route to delete files
-app.delete('/file/:id', async (req, res) => {
-  try {
-    const fileId = new ObjectId(req.params.id);
-    await gfs.delete(fileId);
-    res.json({ success: true, message: 'File deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting file:', error);
-    res.status(500).json({ error: 'Failed to delete file' });
-  }
-});
-
-// Add this route before the server starts listening
-app.post('/api/submit-documents', upload.array('files'), async (req, res) => {
-    try {
-
-        const userId = req.body.userId;
-
-                if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid userId format' 
-            });
-        }
-
-        if (!req.files || req.files.length === 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'No files uploaded' 
-            });
-        }
-
-        // Process each file
-        const uploadResults = await Promise.all(req.files.map(async (file) => {
-            return new Promise((resolve, reject) => {
-                const readStream = fs.createReadStream(file.path);
-                const uploadStream = gfs.openUploadStream(file.originalname, {
-                    contentType: file.mimetype,
-                    metadata: {
-                        uploadDate: new Date(),
-                        originalName: file.originalname,
-                        size: file.size,
-                        label: 'initial-submission',
-                        owner: userId
-                    }
-                });
-
-                uploadStream.on('error', (error) => {
-                    fs.unlinkSync(file.path);
-                    reject(error);
-                });
-
-                uploadStream.on('finish', () => {
-                    fs.unlinkSync(file.path);
-                    resolve({
-                        fileId: uploadStream.id,
-                        filename: file.originalname,
-                        size: file.size,
-                        contentType: file.mimetype
-                    });
-                });
-
-                readStream.pipe(uploadStream);
-            });
-        }));
-
-        res.json({
-            success: true,
-            message: `${uploadResults.length} files uploaded successfully`,
-            files: uploadResults
-        });
-
-    } catch (error) {
-        console.error('File upload error:', error);
-        
-        // Clean up any remaining temp files
-        if (req.files) {
-            req.files.forEach(file => {
-                if (fs.existsSync(file.path)) {
-                    fs.unlinkSync(file.path);
-                }
-            });
-        }
-
-        res.status(500).json({ 
-            success: false,
-            error: 'File upload failed',
-            details: error.message
-        });
-    }
-});
-
-app.post("/api/update-personal-info", upload.array('files'), async (req, res) => {
-    try {
-        // Get the userId from the request body or form data
-        const userId = req.body.userId;
-        let personalInfo = req.body.personalInfo;
-        
-        // If personalInfo is a string, parse it
-        if (typeof personalInfo === 'string') {
-            try {
-                personalInfo = JSON.parse(personalInfo);
-            } catch (parseError) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Invalid personalInfo format',
-                    details: parseError.message
-                });
-            }
-        }
-
-        // Validate userId
-        if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Invalid userId format' 
-            });
-        }
-
-        // Basic validation of required fields
-        const requiredFields = [
-            'firstname', 'lastname', 'gender', 'age', 'occupation', 
-            'nationality', 'civilstatus', 'birthDate', 'birthplace',
-            'mobileNumber', 'emailAddress', 'country', 'province',
-            'city', 'street', 'zipCode', 'firstPriorityCourse'
-        ];
-        
-        const missingFields = requiredFields.filter(field => !personalInfo[field]);
-        if (missingFields.length > 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Missing required fields',
-                missingFields
-            });
-        }
-
-        // Handle file uploads if any
-        const files = [];
-        if (req.files && req.files.length > 0) {
-            for (const file of req.files) {
-                const metadata = {
-                    type: file.mimetype,
-                    size: file.size,
-                    originalName: file.originalname,
-                    uploadDate: new Date(),
-                    label: 'initial-submission'
-                };
-
-                // Upload to GridFS
-                const uploadStream = gfs.openUploadStream(file.originalname, {
-                    contentType: file.mimetype,
-                    metadata: metadata
-                });
-
-                // Create read stream from the uploaded file
-                const readStream = fs.createReadStream(file.path);
-                
-                // Pipe the file data to GridFS
-                await new Promise((resolve, reject) => {
-                    readStream.pipe(uploadStream)
-                        .on('error', reject)
-                        .on('finish', resolve);
-                });
-
-                // Add file reference
-                files.push({
-                    fileId: uploadStream.id,
-                    name: file.originalname,
-                    type: file.mimetype,
-                    label: 'initial-submission',
-                    uploadDate: new Date()
-                });
-
-                // Delete the temporary file
-                fs.unlinkSync(file.path);
-            }
-        }
-
-        // Prepare update data
-        const updateData = {
-            personalInfo: personalInfo,
-            updatedAt: new Date()
-        };
-
-        // Add file references if any
-        if (files.length > 0) {
-            updateData.$push = {
-                files: {
-                    $each: files
-                }
-            };
-        }
-
-        const updatedApplicant = await Applicant.findByIdAndUpdate(
-            userId,
-            updateData,
-            { new: true }
-        ).select('-password');
-
-        if (!updatedApplicant) {
-            return res.status(404).json({ 
-                success: false, 
-                error: 'User not found' 
-            });
-        }
-
-        res.status(200).json({ 
-            success: true,
-            message: 'Personal information and documents updated successfully',
-            data: updatedApplicant
-        });
-    } catch (error) {
-        console.error("Error updating personal info:", error);
-        
-        // Clean up any uploaded files if error occurred
-        if (req.files) {
-            req.files.forEach(file => {
-                if (fs.existsSync(file.path)) {
-                    fs.unlinkSync(file.path);
-                }
-            });
-        }
-
-        res.status(500).json({ 
-            success: false,
-            error: 'Error updating personal info',
-            details: error.message
-        });
-    }
-});
-
-
-app.get("/api/profile/:id", applicantAuthMiddleware, async (req, res) => {
-  try {
-    const applicantId = req.params.id;
-    
-    if (!mongoose.Types.ObjectId.isValid(applicantId)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid applicant ID' 
-      });
-    }
-
-    const applicant = await Applicant.findById(applicantId)
+    const applicant = await Applicant.findById(req.applicant.userId)
       .select('-password -__v');
 
     if (!applicant) {
@@ -948,8 +664,73 @@ app.get("/api/profile/:id", applicantAuthMiddleware, async (req, res) => {
   }
 });
 
+// Update Personal Info
+app.post("/api/applicants/update-info", applicantAuthMiddleware, upload.array('files'), async (req, res) => {
+  try {
+    const { personalInfo } = req.body;
+    const userId = req.applicant.userId;
 
-app.get("/applicant/auth-status", async (req, res) => {
+    // Validate input
+    if (!personalInfo) {
+      return res.status(400).json({
+        success: false,
+        error: 'Personal info is required'
+      });
+    }
+
+    // Parse personalInfo if it's a string
+    let parsedInfo;
+    try {
+      parsedInfo = typeof personalInfo === 'string' ? JSON.parse(personalInfo) : personalInfo;
+    } catch (parseError) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid personal info format'
+      });
+    }
+
+    // Prepare update data
+    const updateData = {
+      personalInfo: parsedInfo,
+      updatedAt: new Date()
+    };
+
+    // Handle file uploads if any
+    if (req.files && req.files.length > 0) {
+      const files = req.files.map(file => ({
+        fileId: new mongoose.Types.ObjectId(),
+        name: file.originalname,
+        type: file.mimetype,
+        label: 'initial-submission',
+        uploadDate: new Date()
+      }));
+
+      updateData.$push = { files: { $each: files } };
+    }
+
+    const updatedApplicant = await Applicant.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true }
+    ).select('-password');
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Personal information updated successfully',
+      data: updatedApplicant
+    });
+  } catch (error) {
+    console.error("Error updating personal info:", error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Error updating personal info',
+      details: error.message
+    });
+  }
+});
+
+// Applicant Auth Status
+app.get("/api/applicants/auth-status", async (req, res) => {
   try {
     const token = req.cookies.applicantToken;
     
@@ -960,7 +741,7 @@ app.get("/applicant/auth-status", async (req, res) => {
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const applicant = await Applicant.findOne({ _id: decoded.userId }).select('-password');
     
     if (!applicant) {
@@ -989,7 +770,8 @@ app.get("/applicant/auth-status", async (req, res) => {
   }
 });
 
-app.post("/applicant/logout", (req, res) => {
+// Applicant Logout
+app.post("/api/applicants/logout", (req, res) => {
   res.clearCookie("applicantToken");
   res.json({ success: true, message: "Logged out successfully" });
 });
@@ -998,7 +780,8 @@ app.post("/applicant/logout", (req, res) => {
 // ASSESSOR ROUTES
 // ======================
 
-app.post("/assessor/register", async (req, res) => {
+// Assessor Registration
+app.post("/api/assessors/register", async (req, res) => {
   const { email, password, fullName, expertise, assessorType } = req.body;
 
   try {
@@ -1006,13 +789,6 @@ app.post("/assessor/register", async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         error: "All fields are required" 
-      });
-    }
-
-    if (password.length < 8 || password.length > 16) {
-      return res.status(400).json({
-        success: false,
-        error: "Password must be 8-16 characters"
       });
     }
 
@@ -1058,7 +834,8 @@ app.post("/assessor/register", async (req, res) => {
   }
 });
 
-app.post("/assessor/login", async (req, res) => {
+// Assessor Login
+app.post("/api/assessors/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
@@ -1101,7 +878,7 @@ app.post("/assessor/login", async (req, res) => {
         expertise: assessor.expertise,
         assessorType: assessor.assessorType
       }, 
-      JWT_SECRET, 
+      process.env.JWT_SECRET, 
       { expiresIn: "1h" }
     );
 
@@ -1133,13 +910,34 @@ app.post("/assessor/login", async (req, res) => {
   }
 });
 
-app.get("/assessor-dashboard", assessorAuthMiddleware, (req, res) => {
-  res.sendFile(
-    path.join(__dirname, "public", "frontend", "AssessorSide", "AssessorDashboard", "AssessorDashboard.html")
-  );
+// Get Assessor Profile
+app.get("/api/assessors/profile", assessorAuthMiddleware, async (req, res) => {
+  try {
+    const assessor = await Assessor.findById(req.assessor.userId)
+      .select('-password -__v');
+
+    if (!assessor) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Assessor not found' 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true,
+      data: assessor 
+    });
+  } catch (error) {
+    console.error('Error fetching assessor profile:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch assessor profile' 
+    });
+  }
 });
 
-app.get("/assessor/auth-status", async (req, res) => {
+// Assessor Auth Status
+app.get("/api/assessors/auth-status", async (req, res) => {
   try {
     const token = req.cookies.assessorToken;
     
@@ -1150,7 +948,7 @@ app.get("/assessor/auth-status", async (req, res) => {
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const assessor = await Assessor.findOne({ _id: decoded.userId }).select('-password');
     
     if (!assessor) {
@@ -1169,9 +967,7 @@ app.get("/assessor/auth-status", async (req, res) => {
         fullName: assessor.fullName,
         expertise: assessor.expertise,
         assessorType: assessor.assessorType,
-        isApproved: assessor.isApproved,
-        createdAt: assessor.createdAt,
-        lastLogin: assessor.lastLogin
+        isApproved: assessor.isApproved
       }
     });
   } catch (err) {
@@ -1183,50 +979,53 @@ app.get("/assessor/auth-status", async (req, res) => {
   }
 });
 
-app.post("/assessor/logout", (req, res) => {
+// Assessor Logout
+app.post("/api/assessors/logout", (req, res) => {
   res.clearCookie("assessorToken");
   res.json({ success: true, message: "Logged out successfully" });
 });
 
-app.get("/api/assessor/applicants", assessorAuthMiddleware, async (req, res) => {
+// Get Assigned Applicants
+app.get("/api/assessors/applicants", assessorAuthMiddleware, async (req, res) => {
   try {
-      const assessorId = req.assessor.userId;
-      
-      const applicants = await Applicant.find({ 
-          assignedAssessors: assessorId,
-          status: "Under Assessment"
-      })
-      .select('applicantId personalInfo status createdAt finalScore')
-      .sort({ createdAt: -1 });
+    const assessorId = req.assessor.userId;
+    
+    const applicants = await Applicant.find({ 
+      assignedAssessors: assessorId,
+      status: "Under Assessment"
+    })
+    .select('applicantId personalInfo status createdAt finalScore')
+    .sort({ createdAt: -1 });
 
-      const formattedApplicants = applicants.map(applicant => {
-          return {
-              _id: applicant._id,
-              applicantId: applicant.applicantId,
-              name: applicant.personalInfo ? 
-                  `${applicant.personalInfo.lastname || ''}, ${applicant.personalInfo.firstname || ''}`.trim() : 
-                  'No name provided',
-              course: applicant.personalInfo?.firstPriorityCourse || 'Not specified',
-              applicationDate: applicant.createdAt,
-              score: applicant.finalScore,
-              status: applicant.status || 'Under Assessment'
-          };
-      });
+    const formattedApplicants = applicants.map(applicant => {
+      return {
+        _id: applicant._id,
+        applicantId: applicant.applicantId,
+        name: applicant.personalInfo ? 
+          `${applicant.personalInfo.lastname || ''}, ${applicant.personalInfo.firstname || ''}`.trim() : 
+          'No name provided',
+        course: applicant.personalInfo?.firstPriorityCourse || 'Not specified',
+        applicationDate: applicant.createdAt,
+        score: applicant.finalScore,
+        status: applicant.status || 'Under Assessment'
+      };
+    });
 
-      res.status(200).json({ 
-          success: true,
-          data: formattedApplicants 
-      });
+    res.status(200).json({ 
+      success: true,
+      data: formattedApplicants 
+    });
   } catch (error) {
-      console.error('Error fetching assigned applicants:', error);
-      res.status(500).json({ 
-          success: false,
-          error: 'Failed to fetch assigned applicants' 
-      });
+    console.error('Error fetching assigned applicants:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch assigned applicants' 
+    });
   }
 });
 
-app.get("/api/assessor/applicants/:id", assessorAuthMiddleware, async (req, res) => {
+// Get Applicant Details
+app.get("/api/assessors/applicants/:id", assessorAuthMiddleware, async (req, res) => {
   try {
     const applicantId = req.params.id;
     const assessorId = req.assessor.userId;
@@ -1252,10 +1051,9 @@ app.get("/api/assessor/applicants/:id", assessorAuthMiddleware, async (req, res)
       });
     }
 
-    // Ensure applicantId is included in the response
     const formattedApplicant = {
       _id: applicant._id,
-      applicantId: applicant.applicantId, // This is the important line
+      applicantId: applicant.applicantId,
       email: applicant.email,
       status: applicant.status,
       createdAt: applicant.createdAt,
@@ -1281,103 +1079,12 @@ app.get("/api/assessor/applicants/:id", assessorAuthMiddleware, async (req, res)
   }
 });
 
-app.get("/api/assessor/applicant-documents/:applicantId", assessorAuthMiddleware, async (req, res) => {
-  try {
-    const applicantId = req.params.applicantId;
-    
-    if (!mongoose.Types.ObjectId.isValid(applicantId)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid applicant ID' 
-      });
-    }
-
-    const assessorId = req.assessor.userId;
-    const applicant = await Applicant.findOne({
-      _id: applicantId,
-      assignedAssessors: assessorId
-    }).select('files personalInfo');
-
-    if (!applicant) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Applicant not found or not assigned to you' 
-      });
-    }
-
-    const documents = applicant.files.map(file => ({
-      name: file.name || path.basename(file.path),
-      path: file.path,
-      type: file.type || path.extname(file.path).substring(1).toLowerCase(),
-      status: 'pending',
-      uploadDate: file.uploadDate || new Date()
-    }));
-
-    res.status(200).json({ 
-      success: true,
-      data: {
-        applicant: {
-          name: applicant.personalInfo ? 
-            `${applicant.personalInfo.firstname || ''} ${applicant.personalInfo.lastname || ''}`.trim() : 
-            'No name provided',
-          course: applicant.personalInfo?.firstPriorityCourse || 'Not specified'
-        },
-        documents
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching applicant documents:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch applicant documents' 
-    });
-  }
-});
-
-app.get("/api/evaluations", assessorAuthMiddleware, async (req, res) => {
-  try {
-    const { applicantId } = req.query;
-    const assessorId = req.assessor.userId;
-    
-    if (!mongoose.Types.ObjectId.isValid(applicantId)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid applicant ID' 
-      });
-    }
-
-    const evaluation = await Evaluation.findOne({
-      applicantId,
-      assessorId
-    });
-
-    if (!evaluation) {
-      return res.status(200).json({ 
-        success: true,
-        data: null
-      });
-    }
-
-    res.status(200).json({ 
-      success: true,
-      data: evaluation
-    });
-  } catch (error) {
-    console.error('Error fetching evaluation:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch evaluation' 
-    });
-  }
-});
-
-// In server.js, modify the evaluations POST route:
-app.post("/api/evaluations", assessorAuthMiddleware, async (req, res) => {
+// Submit Evaluation
+app.post("/api/assessors/evaluations", assessorAuthMiddleware, async (req, res) => {
   try {
     const { applicantId, scores } = req.body;
     const assessorId = req.assessor.userId;
 
-    // Validate input
     if (!applicantId || !scores) {
       return res.status(400).json({
         success: false,
@@ -1385,7 +1092,7 @@ app.post("/api/evaluations", assessorAuthMiddleware, async (req, res) => {
       });
     }
 
-    // Calculate totals
+    // Calculate total score
     const totalScore = 
       (scores.educationalQualification?.score || 0) +
       (scores.workExperience?.score || 0) +
@@ -1394,7 +1101,6 @@ app.post("/api/evaluations", assessorAuthMiddleware, async (req, res) => {
 
     const isPassed = totalScore >= 60;
 
-    // Create the full evaluation object
     const evaluationData = {
       assessorId: new mongoose.Types.ObjectId(assessorId),
       educationalQualification: {
@@ -1423,7 +1129,6 @@ app.post("/api/evaluations", assessorAuthMiddleware, async (req, res) => {
       evaluatedAt: new Date()
     };
 
-    // Update the applicant document
     const updatedApplicant = await Applicant.findByIdAndUpdate(
       applicantId,
       {
@@ -1461,12 +1166,12 @@ app.post("/api/evaluations", assessorAuthMiddleware, async (req, res) => {
   }
 });
 
-app.post("/api/evaluations/finalize", assessorAuthMiddleware, async (req, res) => {
+// Finalize Evaluation
+app.post("/api/assessors/evaluations/finalize", assessorAuthMiddleware, async (req, res) => {
   try {
     const { applicantId, comments } = req.body;
     const assessorId = req.assessor.userId;
 
-    // Find the applicant and their most recent evaluation
     const applicant = await Applicant.findOne({
       _id: applicantId,
       assignedAssessors: assessorId
@@ -1479,7 +1184,6 @@ app.post("/api/evaluations/finalize", assessorAuthMiddleware, async (req, res) =
       });
     }
 
-    // Get the most recent evaluation (last in the array)
     const evaluationIndex = applicant.evaluations.length - 1;
     if (evaluationIndex < 0) {
       return res.status(400).json({
@@ -1489,13 +1193,10 @@ app.post("/api/evaluations/finalize", assessorAuthMiddleware, async (req, res) =
     }
 
     const evaluation = applicant.evaluations[evaluationIndex];
-    
-    // Calculate final status
     const newStatus = evaluation.totalScore >= 60 
       ? "Evaluated - Passed" 
       : "Evaluated - Failed";
 
-    // Update the evaluation in the applicant's evaluations array
     const updatedApplicant = await Applicant.findOneAndUpdate(
       {
         _id: applicantId,
@@ -1540,7 +1241,8 @@ app.post("/api/evaluations/finalize", assessorAuthMiddleware, async (req, res) =
 // ADMIN ROUTES
 // ======================
 
-app.post("/admin/register", async (req, res) => {
+// Admin Registration
+app.post("/api/admins/register", async (req, res) => {
   try {
     const { email, password, fullName } = req.body;
 
@@ -1548,13 +1250,6 @@ app.post("/admin/register", async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         error: "All fields are required" 
-      });
-    }
-
-    if (password.length < 8 || password.length > 16) {
-      return res.status(400).json({
-        success: false,
-        error: "Password must be 8-16 characters"
       });
     }
 
